@@ -205,7 +205,7 @@ class XmlBuilder(object):
         else:
             print("No workbook downloaded...")
 
-    def update_parameters(self, parameter_name: str, tag_name: str, save=False):
+       def update_parameters(self, parameter_name: str, tag_name: str, save=False):
         """update specified workbook parameters"""
         self.XML_WORKBOOK = ET.parse(self.WORKBOOK)
         print(type(self.XML_WORKBOOK))
@@ -217,17 +217,24 @@ class XmlBuilder(object):
         QUERY = root.find(xml_search_query)
         query_children = QUERY.getchildren()
 
-        date_lambda = datetime.datetime.strptime((query_children[-1]
+        date_lambda = datetime.strptime((query_children[-1]
                                                   .attrib.get('value')
                                                   .strip('#')
                                                   .strip(' 00:00:00')),
                                                    "%Y-%m-%d")
-        current_date = datetime.date.today()
-        day_difference = int(str(datetime.date.today() - datetime.date(date_lambda.year,
+        current_date = date.today()
+        day_difference = int(str(date.today() - date(date_lambda.year,
                                                                        date_lambda.month,
                                                                        date_lambda.day)).split(" ")[0])
         print("CURRENT DATE: {}".format(current_date))
         print("Date Difference: {}".format(day_difference))
+
+        # --- update parameter list
+        date_tag = "#{}#".format(current_date)
+        attribute = QUERY.makeelement('member', {'value': date_tag})
+        print("adding attribute: {} ...".format(attribute))
+        QUERY.append(attribute)
+        self.XML_WORKBOOK.write("F:\\local-git\\TableauREST_API\\TABLEAU_TEMP_DIR\\UPDATE_WB.twb")
 
 
     def create_pdf(self):
