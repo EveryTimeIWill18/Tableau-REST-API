@@ -1,9 +1,11 @@
 import requests
 import xml.etree.ElementTree as ET
+import os
 import re
 from datetime import date, datetime, timedelta
-from pprint import pprint
-from collections import *
+import zipfile
+import subprocess
+
 
 
 
@@ -75,6 +77,11 @@ class XmlBuilder(object):
         # --- workbook data
         self.workbooks = list()
 
+        # --- current workbook in processing
+        self.WORKBOOK = None
+        self.XML_WORKBOOK = None
+        self.WORKBOOK_EXTRACTS = None
+
 
 
         # --- storage classes
@@ -120,10 +127,6 @@ class XmlBuilder(object):
             print(str(e))
 
 
-
-
-
-
     def sign_out(self, *args, **kwargs):
         """sign out of the server"""
         signout_url = "http://{}/api/{}/auth/signout".format(self.url_, self.version_)
@@ -155,58 +158,84 @@ class XmlBuilder(object):
             if server_response.status_code == 200:
                 print("Connected to Workbooks: response[{}]".format(server_response.status_code))
                 xml_response = ET.fromstring(encoded_response)
-                self.workbooks = xml_response.findall('.//t:workbook', namespaces=self.xmlns)
-                for wb in self.workbooks:
-                    print(wb.get('name'), wb.get('id'))
+                all_workbooks = xml_response.findall('.//t:workbook', namespaces=self.xmlns)
+                self.workbooks = {wb.get('name'): wb.get('id') for wb in all_workbooks}
+                #for wb in self.workbooks:
+                #    print(wb.get('name'), wb.get('id'))
             else:
                 raise Exception("Error connecting to workbooks: response[{}]".format(server_response))
         except Exception as e:
             print(str(e))
 
-    def download_workbook(self, un: str, pw: str):
+    def download_workbook(self):
         """get workbook"""
-        workbook_url ="/api/{}/sites/{}/users/workbooks".format(self.version_, un, pw)
 
+        file_ = "GANTT_Test.twb" # --- to be removed
 
+        workbook_url ="http://{}/api/{}/sites/{}/workbooks/{}/content".format(self.url_,
+                                                                         self.version_,
+                                                                         self.id,
+                                                                         self.workbooks.get('GANTT_7_13_2017'))
 
+        server_response = requests.get(workbook_url, headers={'x-tableau-auth': self.auth_token},
+                                                     allow_redirects=True)
+        if server_response.status_code == 200:
+            os.mkdir("TABLEAU_TEMP_DIR")
+            os.chdir(path="F:\\local-git\\TableauREST_API\\TABLEAU_TEMP_DIR")
+            print("Download Status: [{}]\n\t proceeding with download ...".format(server_response.status_code))
+            with open(file_, 'wb') as twbx:
+                twbx.write(server_response.content)
+            self.WORKBOOK = file_
 
-
-
-
-
-
-    def build_xml(self, login: bool, *args, **kwargs):
-        """Builds the xml framework for the Tableau REST API"""
-        xml_request = ET.Element('tsRequest')
-        if login is True:
-            credentials = ET.SubElement(xml_request, 'credentials',
-                                        name=list(kwargs.values())[0],
-                                        password=list(kwargs.values())[1])
-            ET.SubElement(credentials, 'site', contentUrl='')
-            self.current_xml_request = ET.tostring(xml_request)
+    def open_workbook_xml(self):
+        """check to see if tableau workbook is zipped"""
+        if self.WORKBOOK is not None:
+            if zipfile.is_zipfile(self.WORKBOOK):
+                zip_file = zipfile.ZipFile(self.WORKBOOK)
+                # --- set the workbook to the .twb file
+                self.WORKBOOK = list(filter(lambda x: x.split('.')[-1] in ('twb', 'tds'),
+                                              zip_file.namelist()))[0]
+                print(self.WORKBOOK)
+                #print("twbx archives: {}".format(archived_files))
+                #self.WORKBOOK_EXTRACTS = zip_file.extract(*archived_files, 'F:\\local-git\\TableauREST_API')
+                zip_file.extractall(path='F:\\local-git\\TableauREST_API\\TABLEAU_TEMP_DIR')
+            else:
+                # --- no zipfile process needed
+                self.WORKBOOK_EXTRACTS = self.WORKBOOK
         else:
-            for a in args:
-                ET.SubElement(xml_request, a.__str__())
-            self.current_xml_request = ET.tostring(xml_request)
+            print("No workbook downloaded...")
+
+    def update_parameters(self, parameter_name: str, tag_name: str, save=False):
+        """update specified workbook parameters"""
+        self.XML_WORKBOOK = ET.parse(self.WORKBOOK)
+        print(type(self.XML_WORKBOOK))
+
+        root = self.XML_WORKBOOK.getroot()
+        current_parameter = "'[{}]'".format(parameter_name)
+        xml_search_query = ".//*[@name={}]/{}".format(current_parameter, tag_name)
+
+        QUERY = root.find(xml_search_query)
+        query_children = QUERY.getchildren()
+
+        date_lambda = datetime.datetime.strptime((query_children[-1]
+                                                  .attrib.get('value')
+                                                  .strip('#')
+                                                  .strip(' 00:00:00')),
+                                                   "%Y-%m-%d")
+        current_date = datetime.date.today()
+        day_difference = int(str(datetime.date.today() - datetime.date(date_lambda.year,
+                                                                       date_lambda.month,
+                                                                       date_lambda.day)).split(" ")[0])
+        print("CURRENT DATE: {}".format(current_date))
+        print("Date Difference: {}".format(day_difference))
+
+
+    def create_pdf(self):
+        """create a pdf of the Daily/Weekly/Monthly Dashboards"""
+        tabcmd = subprocess.check_output(['ls', '-l'])
 
 
 
-
-    def make_request(self):
-        """make a request to the Tableau REST API"""
-        self.server_response = requests.post(self.current_url_, self.current_xml_request)
-        self.status = self.server_response.status_code
-
-    def get_token(self):
-        """get auth token"""
-        text_response = self.server_response.text
-        self.encoded_server_response = str(text_response).encode('ascii', errors="backslashreplace").decode('utf-8')
-        parsed_response = ET.fromstring(self.encoded_server_response)
-        self.auth_token = parsed_response.find('t:credentials', namespaces=self.xmlns).get('token')
-        self.id = parsed_response.find('.//t:site', namespaces=self.xmlns).get('id')
-        #user_id = parsed_response.find('.//t:site', namespaces=self.xmlns).get('id')
-        #print("id: {}".format(self.id))
-        #print("user id: {}".format(user_id))
 
 
 
@@ -234,12 +263,10 @@ class XmlBuilder(object):
 
 
 if __name__=="__main__":
-    xml = XmlBuilder(url='', version=2.6)
-    #xml.build_xml(True, name='y', password='')
-    xml.sign_in(un='', pw='')
-   # xml.get_token()
-   # print(xml.download_workbook(un="", pw=""))
-    xml.query_workbooks("")
+    xml = XmlBuilder(url='172.31.32.54', version=2.6)
+    #xml.build_xml(True, name='wmurphy', password='Tr2oy2222!')
+    xml.sign_in(un='Administrator', pw='=%vT8AFMj$')
+    xml.query_workbooks("Risk and Demographics")
     #xml.sign_out()
 
     #xml.make_request()
@@ -248,6 +275,15 @@ if __name__=="__main__":
     #print(xml.auth_token)
     #print(xml.id)
     #xml.query_projects()
+
+    xml.download_workbook()
+    xml.open_workbook_xml()
+    xml.create_pdf()
+    #xml.update_parameters()
+    #print(xml.workbooks)
+
+
+
     """
     def sign_out(self):
         self.temp_url = "http://" + self.url_ + "/api/{}/auth/signout".format(self.version_)
