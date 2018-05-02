@@ -263,10 +263,10 @@ class XmlBuilder(object):
 
 
 if __name__=="__main__":
-    xml = XmlBuilder(url='172.31.32.54', version=2.6)
-    #xml.build_xml(True, name='wmurphy', password='Tr2oy2222!')
-    xml.sign_in(un='Administrator', pw='=%vT8AFMj$')
-    xml.query_workbooks("Risk and Demographics")
+    xml = XmlBuilder(url='', version=2.6)
+    
+    xml.sign_in(un='USER NAME', pw='PASSWORD')
+    xml.query_workbooks("WORKBOOK NAME")
     #xml.sign_out()
 
     #xml.make_request()
@@ -282,10 +282,3 @@ if __name__=="__main__":
     #xml.update_parameters()
     #print(xml.workbooks)
 
-
-
-    """
-    def sign_out(self):
-        self.temp_url = "http://" + self.url_ + "/api/{}/auth/signout".format(self.version_)
-        srvr_response = requests.post(self.temp_url, headers={'x-tableau-auth': self.auth_token})
-        self.status = srvr_response.status_code"""
