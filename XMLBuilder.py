@@ -1,10 +1,11 @@
 import requests
 import xml.etree.ElementTree as ET
 import os
-import re
 from datetime import date, datetime, timedelta
 import zipfile
-import subprocess
+from pprint import pprint
+import math
+import tableauserverclient.server
 
 
 
@@ -48,11 +49,9 @@ class TableauServerLogging:
         __class__.LOGGING.update(temp_log_)
 
 
-
 class XmlBuilder(object):
     """xml builder class"""
     logger = TableauServerLogging()
-
 
     def __init__(self, url, version):
         self.sign_in_xml = None
@@ -81,8 +80,8 @@ class XmlBuilder(object):
         self.WORKBOOK = None
         self.XML_WORKBOOK = None
         self.WORKBOOK_EXTRACTS = None
-
-
+        self.UPDATED_WORKBOOK = None
+        self.PROJECTS = None
 
         # --- storage classes
         self.login = AuthTokens.LOGIN
@@ -90,7 +89,6 @@ class XmlBuilder(object):
         self.sites = AuthTokens.SITES
         self.projects = AuthTokens.PROJECTS
         self.workbooks = AuthTokens.WORKBOOKS
-
 
     def sign_in(self, un: str, pw: str, *args, **kwargs):
         """sign into the server"""
@@ -101,6 +99,7 @@ class XmlBuilder(object):
                                     name=un, password=pw)
         ET.SubElement(credentials, 'site', contentUrl='')
         self.sign_in_xml = ET.tostring(xml_request)
+        print(self.sign_in_xml)
         try:
             # --- post a login request
             server_response = requests.post(signin_url, self.sign_in_xml)
@@ -126,7 +125,6 @@ class XmlBuilder(object):
         except Exception as e:
             print(str(e))
 
-
     def sign_out(self, *args, **kwargs):
         """sign out of the server"""
         signout_url = "http://{}/api/{}/auth/signout".format(self.url_, self.version_)
@@ -143,7 +141,7 @@ class XmlBuilder(object):
         except Exception as e:
             print(str(e))
 
-    def query_workbooks(self, workbook_name):
+    def query_workbooks(self):
         """returns workbook information"""
 
         workbook_url = "http://{}/api/{}/sites/{}/users/{}/workbooks".format(self.url_,
@@ -156,26 +154,27 @@ class XmlBuilder(object):
 
         try:
             if server_response.status_code == 200:
-                print("Connected to Workbooks: response[{}]".format(server_response.status_code))
+                pprint("Connected to Workbooks: response[{}]".format(server_response.status_code))
                 xml_response = ET.fromstring(encoded_response)
                 all_workbooks = xml_response.findall('.//t:workbook', namespaces=self.xmlns)
                 self.workbooks = {wb.get('name'): wb.get('id') for wb in all_workbooks}
-                #for wb in self.workbooks:
-                #    print(wb.get('name'), wb.get('id'))
+                for wb in self.workbooks:
+                    print("Current workbook: {}| workbook id: {} | {}".format(wb.get('name'),
+                                                                              wb.get('id')))
             else:
                 raise Exception("Error connecting to workbooks: response[{}]".format(server_response))
         except Exception as e:
             print(str(e))
 
-    def download_workbook(self):
+    def download_workbook(self, workbook_name: str):
         """get workbook"""
 
-        file_ = "GANTT_Test.twb" # --- to be removed
+        file_ = workbook_name.__str__()
 
         workbook_url ="http://{}/api/{}/sites/{}/workbooks/{}/content".format(self.url_,
                                                                          self.version_,
                                                                          self.id,
-                                                                         self.workbooks.get('GANTT_7_13_2017'))
+                                                                         self.workbooks.get(file_))
 
         server_response = requests.get(workbook_url, headers={'x-tableau-auth': self.auth_token},
                                                      allow_redirects=True)
@@ -186,6 +185,23 @@ class XmlBuilder(object):
             with open(file_, 'wb') as twbx:
                 twbx.write(server_response.content)
             self.WORKBOOK = file_
+
+
+    def get_workbook_views(self, wb_name: str):
+        """return workbook views data"""
+        workbook_views_url =  "http://{}/api/{}/sites/{}/workbooks/{}/views".format(self.url_,
+                                                                                    self.version_,
+                                                                                    self.id,
+                                                                                    self.workbooks.get(str(wb_name)))
+        server_response = requests.get(workbook_views_url, headers={'x-tableau-auth': self.auth_token})
+        print("workbook views response: {}".format(server_response.status_code))
+        
+
+
+
+
+
+
 
     def open_workbook_xml(self):
         """check to see if tableau workbook is zipped"""
@@ -205,7 +221,7 @@ class XmlBuilder(object):
         else:
             print("No workbook downloaded...")
 
-       def update_parameters(self, parameter_name: str, tag_name: str, save=False):
+    def update_parameters(self, parameter_name: str, tag_name: str, save=False):
         """update specified workbook parameters"""
         self.XML_WORKBOOK = ET.parse(self.WORKBOOK)
         print(type(self.XML_WORKBOOK))
@@ -237,9 +253,46 @@ class XmlBuilder(object):
         self.XML_WORKBOOK.write("F:\\local-git\\TableauREST_API\\TABLEAU_TEMP_DIR\\UPDATE_WB.twb")
 
 
-    def create_pdf(self):
-        """create a pdf of the Daily/Weekly/Monthly Dashboards"""
-        tabcmd = subprocess.check_output(['ls', '-l'])
+    def upload_workbook(self):
+        """upload workbook to server"""
+
+        FILESIZE_LIMIT = 1024 * 1024 * 64
+        CHUNK_SIZE = 1024 * 1024 * 5
+        page_num, page_size = 1, 100
+
+        url = "http://{}/api/{}/sites/{}/projects".format(self.url_, self.version_, self.id)
+        paged_url = url + "?pageSize={}&pageNumber={}".format(page_size, page_num)
+
+        server_response = requests.get(paged_url, headers={'x-tableau-auth': self.auth_token})
+        print("UPLOAD WORKBOOK RESPONSE: status[{}]".format(server_response.status_code))
+        text_response = server_response.text
+        encoded_response = text_response.encode('ascii', errors='backslashreplace').decode('utf-8')
+        xml_response = ET.fromstring(encoded_response)
+        total_projects = int(xml_response.find('t:pagination', namespaces=self.xmlns).get('totalAvailable'))
+        max_page = int(math.ceil(total_projects / page_size))
+        projects = xml_response.findall('.//t:project', namespaces=self.xmlns)
+        #print("max page: {}".format(max_page))
+        #print("projects {}".format(projects))
+
+        print("run paged response loop")
+        for page in range(2, max_page + 1):
+            paged_url = url + "?pageSize={0}&pageNumber={1}".format(page_size, page)
+            server_response = requests.get(paged_url, headers={'x-tableau-auth': self.auth_token})
+            print("Paged response server status : [{}]".format(server_response))
+
+        # --- pulls project names and corresponding ids
+
+        self.PROJECTS = {str(project.get('name')): project.get('id') for project in projects}
+        for project in projects:
+            print("Project Name: {} | Porject ID: {}".format(project.get('name'), project.get('id')))
+
+
+
+
+    def get_workbook_pages(self):
+        """return a dictionary of pages contained within the workbook"""
+
+
 
 
 
